@@ -1,4 +1,6 @@
 bin
 bin_test
 generated
+target/
+.consulo/
 

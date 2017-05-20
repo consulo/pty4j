@@ -21,7 +21,12 @@
 package com.pty4j.unix;
 
 
-import com.google.common.collect.Lists;
+import java.io.File;
+import java.util.Arrays;
+import java.util.List;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import com.pty4j.WinSize;
 import com.pty4j.util.PtyUtil;
 import com.sun.jna.Native;
@@ -29,11 +34,6 @@ import com.sun.jna.Platform;
 import com.sun.jna.Structure;
 import jtermios.JTermios;
 import jtermios.Termios;
-import org.apache.log4j.Logger;
-
-import java.io.File;
-import java.util.Arrays;
-import java.util.List;
 
 
 /**
@@ -41,7 +41,7 @@ import java.util.List;
  * emulating such system calls on non POSIX systems.
  */
 public class PtyHelpers {
-  private static final Logger LOG = Logger.getLogger(PtyHelpers.class);
+  private static final Logger LOG = LoggerFactory.getLogger(PtyHelpers.class);
 
   /**
    * Provides a OS-specific interface to the PtyHelpers methods.
@@ -415,8 +415,8 @@ public class PtyHelpers {
     public short ws_ypixel;
 
     @Override
-    protected List getFieldOrder() {
-      return Lists.newArrayList("ws_row", "ws_col", "ws_xpixel", "ws_ypixel");
+    protected List<String> getFieldOrder() {
+      return Arrays.asList("ws_row", "ws_col", "ws_xpixel", "ws_ypixel");
     }
 
     public winsize() {

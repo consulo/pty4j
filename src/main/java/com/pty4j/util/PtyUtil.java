@@ -1,13 +1,12 @@
 package com.pty4j.util;
 
-import com.google.common.base.Function;
-import com.google.common.collect.Lists;
 import com.pty4j.windows.WinPty;
 import com.sun.jna.Platform;
 
 import java.io.File;
 import java.net.URI;
 import java.security.CodeSource;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
@@ -20,12 +19,13 @@ public class PtyUtil {
   private final static String PTY_LIB_FOLDER = System.getenv("PTY_LIB_FOLDER");
 
   public static String[] toStringArray(Map<String, String> environment) {
-    if (environment == null) return new String[0];
-    List<String> list = Lists.transform(Lists.newArrayList(environment.entrySet()), new Function<Map.Entry<String, String>, String>() {
-      public String apply(Map.Entry<String, String> entry) {
-        return entry.getKey() + "=" + entry.getValue();
-      }
-    });
+    if (environment == null) {
+      return new String[0];
+    }
+    List<String> list = new ArrayList<>();
+    for (Map.Entry<String, String> entry : environment.entrySet()) {
+      list.add(entry.getKey() + "=" + entry.getValue());
+    }
     return list.toArray(new String[list.size()]);
   }
 
@@ -42,7 +42,8 @@ public class PtyUtil {
 
     if (codeSource.getLocation() != null) {
       jarFile = new File(codeSource.getLocation().toURI());
-    } else {
+    }
+    else {
       String path = aclass.getResource(aclass.getSimpleName() + ".class").getPath();
 
       int startIndex = path.indexOf(":") + 1;
@@ -78,12 +79,17 @@ public class PtyUtil {
       lib = lib.exists() ? lib : resolveNativeLibrary(new File(libFolder, "libpty"));
 
       if (!lib.exists()) {
+        lib = resolveNativeLibrary(new File(libFolder.getParentFile(), "libpty"));
+      }
+
+      if (!lib.exists()) {
         throw new IllegalStateException(String.format("Couldn't find %s, jar folder %s", lib.getName(),
-                libFolder.getAbsolutePath()));
+            libFolder.getAbsolutePath()));
       }
 
       return lib;
-    } else {
+    }
+    else {
       throw new IllegalStateException("Couldn't detect lib folder");
     }
   }
@@ -106,7 +112,8 @@ public class PtyUtil {
 
     if (new File(parent, prefix).exists()) {
       return new File(new File(parent, prefix), fileName);
-    } else {
+    }
+    else {
       return new File(new File(path, prefix), fileName);
     }
   }
@@ -116,15 +123,20 @@ public class PtyUtil {
 
     if (Platform.isMac()) {
       result = "macosx";
-    } else if (Platform.isWindows()) {
+    }
+    else if (Platform.isWindows()) {
       result = "win";
-    } else if (Platform.isLinux()) {
+    }
+    else if (Platform.isLinux()) {
       result = "linux";
-    } else if (Platform.isFreeBSD()) {
+    }
+    else if (Platform.isFreeBSD()) {
       result = "freebsd";
-    } else if (Platform.isOpenBSD()) {
+    }
+    else if (Platform.isOpenBSD()) {
       result = "openbsd";
-    } else {
+    }
+    else {
       throw new IllegalStateException("Platform " + Platform.getOSType() + " is not supported");
     }
 
@@ -136,11 +148,14 @@ public class PtyUtil {
 
     if (Platform.isMac()) {
       result = "libpty.dylib";
-    } else if (Platform.isWindows()) {
+    }
+    else if (Platform.isWindows()) {
       result = "winpty.dll";
-    } else if (Platform.isLinux() || Platform.isFreeBSD() || Platform.isOpenBSD()) {
+    }
+    else if (Platform.isLinux() || Platform.isFreeBSD() || Platform.isOpenBSD()) {
       result = "libpty.so";
-    } else {
+    }
+    else {
       throw new IllegalStateException("Platform " + Platform.getOSType() + " is not supported");
     }
 

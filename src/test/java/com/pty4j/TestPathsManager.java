@@ -1,4 +1,4 @@
-package testData;
+package com.pty4j;
 
 import java.io.File;
 import java.net.URL;
@@ -33,6 +33,8 @@ public class TestPathsManager {
     if (file == null) {
       return null;
     }
-    return file.substring(0, file.lastIndexOf(File.separator)) + File.separator;
+    File f = new File(file);
+
+    return f.getParentFile().getParentFile().getParentFile().getPath();
   }
 }

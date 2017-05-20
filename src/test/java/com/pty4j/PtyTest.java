@@ -21,17 +21,14 @@
 package com.pty4j;
 
 
+import com.sun.jna.Platform;
+import junit.framework.TestCase;
+
 import java.io.*;
-import java.net.URL;
 import java.util.Scanner;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
-
-import junit.framework.TestCase;
-
-import com.sun.jna.Platform;
-import testData.TestPathsManager;
 
 import static org.junit.Assume.assumeTrue;
 
@@ -90,7 +87,8 @@ public class PtyTest extends TestCase {
           }
 
           latch.countDown();
-        } catch (Exception e) {
+        }
+        catch (Exception e) {
           e.printStackTrace();
         }
       }
@@ -111,7 +109,8 @@ public class PtyTest extends TestCase {
               os.flush();
             }
           }
-        } catch (Exception e) {
+        }
+        catch (Exception e) {
           e.printStackTrace();
         }
       }
@@ -157,7 +156,8 @@ public class PtyTest extends TestCase {
               readChars.incrementAndGet();
             }
           }
-        } catch (Exception e) {
+        }
+        catch (Exception e) {
           e.printStackTrace();
         }
       }
@@ -176,7 +176,8 @@ public class PtyTest extends TestCase {
           result[0] = pty.waitFor();
 
           latch.countDown();
-        } catch (Exception e) {
+        }
+        catch (Exception e) {
           e.printStackTrace();
         }
       }
@@ -221,7 +222,8 @@ public class PtyTest extends TestCase {
               readChars.incrementAndGet();
             }
           }
-        } catch (Exception e) {
+        }
+        catch (Exception e) {
           e.printStackTrace();
         }
       }
@@ -240,7 +242,8 @@ public class PtyTest extends TestCase {
           result[0] = pty.waitFor();
 
           latch.countDown();
-        } catch (Exception e) {
+        }
+        catch (Exception e) {
           e.printStackTrace();
         }
       }
@@ -281,7 +284,8 @@ public class PtyTest extends TestCase {
           result[0] = pty.waitFor();
 
           latch.countDown();
-        } catch (InterruptedException e) {
+        }
+        catch (InterruptedException e) {
           // Simply stop the thread...
         }
       }
@@ -301,6 +305,11 @@ public class PtyTest extends TestCase {
    * Tests that getting and setting the window size for a file descriptor works.
    */
   public void testGetAndSetWinSize() throws Exception {
+    if (Platform.isWindows()) {
+      // ignored for windows due no impl for #getWinSize();
+      return;
+    }
+
     String[] cmd = preparePingCommand(2);
 
     PtyProcess pty = PtyProcess.exec(cmd);
@@ -322,17 +331,18 @@ public class PtyTest extends TestCase {
   public void testConsoleMode() throws Exception {
     String[] command;
     if (Platform.isWindows()) {
-      File file = new File(TestPathsManager.getTestDataPath() + "console-mode-test1.bat");
+      File file = new File(TestPathsManager.getTestDataPath(), "console-mode-test1.bat");
       assumeTrue(file.exists());
-      command = new String[] {
-        "cmd.exe", "/c",
-        file.getAbsolutePath()
+      command = new String[]{
+          "cmd.exe", "/c",
+          file.getAbsolutePath()
       };
-    } else {
-      File file = new File(TestPathsManager.getTestDataPath() + "console-mode-test1.sh");
+    }
+    else {
+      File file = new File(TestPathsManager.getTestDataPath(), "console-mode-test1.sh");
       assumeTrue(file.exists());
-      command = new String[] {
-        "/bin/sh", file.getAbsolutePath()
+      command = new String[]{
+          "/bin/sh", file.getAbsolutePath()
       };
     }
 
@@ -379,9 +389,11 @@ public class PtyTest extends TestCase {
           }
           myOutput.append(buf, 0, count);
         }
-      } catch (IOException e) {
+      }
+      catch (IOException e) {
         throw new RuntimeException(e);
-      } finally {
+      }
+      finally {
         myLatch.countDown();
       }
     }
@@ -391,11 +403,14 @@ public class PtyTest extends TestCase {
     String value = Integer.toString(count);
     if (Platform.isWindows()) {
       return new String[]{"ping", "-n", value, "127.0.0.1"};
-    } else if (Platform.isSolaris()) {
+    }
+    else if (Platform.isSolaris()) {
       return new String[]{"/usr/sbin/ping", "-s", "127.0.0.1", "64", value};
-    } else if (Platform.isMac() || Platform.isFreeBSD() || Platform.isOpenBSD()) {
+    }
+    else if (Platform.isMac() || Platform.isFreeBSD() || Platform.isOpenBSD()) {
       return new String[]{"/sbin/ping", "-c", value, "127.0.0.1"};
-    } else if (Platform.isLinux()) {
+    }
+    else if (Platform.isLinux()) {
       return new String[]{"/bin/ping", "-c", value, "127.0.0.1"};
     }
 
