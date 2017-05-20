@@ -23,6 +23,7 @@ package com.pty4j;
 
 import com.sun.jna.Platform;
 import junit.framework.TestCase;
+import org.junit.Ignore;
 
 import java.io.*;
 import java.util.Scanner;
@@ -36,6 +37,7 @@ import static org.junit.Assume.assumeTrue;
 /**
  * Test cases for {@link com.pty4j.unix.PtyHelpers}.
  */
+@Ignore
 public class PtyTest extends TestCase {
   static class Command {
     final String m_command;
