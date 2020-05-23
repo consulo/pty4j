@@ -40,21 +40,22 @@ public class PtyUtil {
 
     File jarFile;
 
+    String urlLocation;
     if (codeSource.getLocation() != null) {
-      jarFile = new File(codeSource.getLocation().toURI());
+      urlLocation = codeSource.getLocation().getFile();
     }
     else {
-      String path = aclass.getResource(aclass.getSimpleName() + ".class").getPath();
-
-      int startIndex = path.indexOf(":") + 1;
-      int endIndex = path.indexOf("!");
-      if (startIndex == -1 || endIndex == -1) {
-        throw new IllegalStateException("Class " + aclass.getSimpleName() + " is located not within a jar: " + path);
-      }
-      String jarFilePath = path.substring(startIndex, endIndex);
-      jarFilePath = new URI(jarFilePath).getPath();
-      jarFile = new File(jarFilePath);
+      urlLocation = aclass.getResource(aclass.getSimpleName() + ".class").getPath();
     }
+
+    int startIndex = urlLocation.indexOf(":") + 1;
+    int endIndex = urlLocation.indexOf("!");
+    if (startIndex == -1 || endIndex == -1) {
+      throw new IllegalStateException("Class " + aclass.getSimpleName() + " is located not within a jar: " + urlLocation);
+    }
+    String jarFilePath = urlLocation.substring(startIndex, endIndex);
+    jarFilePath = new URI(jarFilePath).getPath();
+    jarFile = new File(jarFilePath);
     return jarFile.getParentFile().getAbsolutePath();
   }
 
