@@ -21,19 +21,21 @@
 package com.pty4j.unix;
 
 
-import java.io.File;
-import java.util.Arrays;
-import java.util.List;
-
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import com.pty4j.WinSize;
+import com.pty4j.unix.macosx.OSFacadeImpl;
 import com.pty4j.util.PtyUtil;
 import com.sun.jna.Native;
 import com.sun.jna.Platform;
 import com.sun.jna.Structure;
+import com.sun.jna.ptr.IntByReference;
 import jtermios.JTermios;
 import jtermios.Termios;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+import java.io.File;
+import java.util.Arrays;
+import java.util.List;
 
 
 /**
@@ -60,7 +62,7 @@ public class PtyHelpers {
 
     /**
      * Returns the window size information for the process with the given FD and
-     * stores the results in the given {@link com.pty4j.WinSize} structure.
+     * stores the results in the given {@link WinSize} structure.
      *
      * @param fd the FD of the process to query;
      * @param ws the WinSize structure to store the results into.
@@ -103,7 +105,7 @@ public class PtyHelpers {
      */
     int waitpid(int pid, int[] stat, int options);
 
-    int sigprocmask(int how, com.sun.jna.ptr.IntByReference set, com.sun.jna.ptr.IntByReference oldset);
+    int sigprocmask(int how, IntByReference set, IntByReference oldset);
 
     String strerror(int errno);
 
@@ -192,22 +194,22 @@ public class PtyHelpers {
 
   // VARIABLES
 
-  private static OSFacade myOsFacade;
+  private static OSFacade ourOsFacade;
 
   // METHODS
 
   static {
     if (Platform.isMac()) {
-      myOsFacade = new com.pty4j.unix.macosx.OSFacadeImpl();
+      ourOsFacade = new OSFacadeImpl();
     }
     else if (Platform.isFreeBSD()) {
-      myOsFacade = new com.pty4j.unix.freebsd.OSFacadeImpl();
+      ourOsFacade = new com.pty4j.unix.freebsd.OSFacadeImpl();
     }
     else if (Platform.isOpenBSD()) {
-      myOsFacade = new com.pty4j.unix.openbsd.OSFacadeImpl();
+      ourOsFacade = new com.pty4j.unix.openbsd.OSFacadeImpl();
     }
     else if (Platform.isLinux()) {
-      myOsFacade = new com.pty4j.unix.linux.OSFacadeImpl();
+      ourOsFacade = new com.pty4j.unix.linux.OSFacadeImpl();
     }
     else if (Platform.isWindows()) {
       throw new IllegalArgumentException("WinPtyProcess should be used on Windows");
@@ -237,7 +239,7 @@ public class PtyHelpers {
   }
 
   public static OSFacade getInstance() {
-    return myOsFacade;
+    return ourOsFacade;
   }
 
   public static Termios createTermios() {
@@ -290,7 +292,7 @@ public class PtyHelpers {
    * @return 0 upon success, or -1 upon failure.
    */
   public static int getWinSize(int fd, WinSize ws) {
-    return myOsFacade.getWinSize(fd, ws);
+    return ourOsFacade.getWinSize(fd, ws);
   }
 
   /**
@@ -314,7 +316,7 @@ public class PtyHelpers {
    * @return 0 upon success, or -1 upon failure.
    */
   public static int setWinSize(int fd, WinSize ws) {
-    return myOsFacade.setWinSize(fd, ws);
+    return ourOsFacade.setWinSize(fd, ws);
   }
 
   /**
@@ -327,7 +329,7 @@ public class PtyHelpers {
    *         an error.
    */
   public static int signal(int pid, int signal) {
-    return myOsFacade.kill(pid, signal);
+    return ourOsFacade.kill(pid, signal);
   }
 
   /**
@@ -340,7 +342,7 @@ public class PtyHelpers {
    * @param options the bit mask with options.
    */
   public static int waitpid(int pid, int[] stat, int options) {
-    return myOsFacade.waitpid(pid, stat, options);
+    return ourOsFacade.waitpid(pid, stat, options);
   }
 
   /**
@@ -353,7 +355,7 @@ public class PtyHelpers {
   }
 
   public static String strerror() {
-    return myOsFacade.strerror(errno());
+    return ourOsFacade.strerror(errno());
   }
 
   /**
@@ -363,11 +365,11 @@ public class PtyHelpers {
    * @param command the command to execute.
    */
   private static int execve(String command, String[] argv, String[] env) {
-    return myOsFacade.execve(command, argv, env);
+    return ourOsFacade.execve(command, argv, env);
   }
 
   public static void chdir(String dirpath) {
-    myOsFacade.chdir(dirpath);
+    ourOsFacade.chdir(dirpath);
   }
 
   /**

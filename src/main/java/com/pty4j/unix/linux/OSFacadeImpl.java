@@ -79,6 +79,8 @@ public class OSFacadeImpl implements PtyHelpers.OSFacade {
     void unsetenv(String s);
 
     void chdir(String dirpath);
+
+    int login_tty(int fd);
   }
 
   public interface Linux_Util_lib extends Library {
@@ -92,9 +94,9 @@ public class OSFacadeImpl implements PtyHelpers.OSFacade {
   
   // VARIABLES
 
-  private static C_lib m_Clib = (C_lib)Native.loadLibrary("c", C_lib.class);
+  private final C_lib m_Clib = Native.loadLibrary("c", C_lib.class);
 
-  private static Linux_Util_lib m_Utillib = (Linux_Util_lib)Native.loadLibrary("util", Linux_Util_lib.class);
+  private final Linux_Util_lib m_Utillib;
 
   // CONSTUCTORS
 
@@ -114,6 +116,17 @@ public class OSFacadeImpl implements PtyHelpers.OSFacade {
 
     PtyHelpers.ECHOKE = 0x01;
     PtyHelpers.ECHOCTL = 0x40;
+
+    m_Utillib = init();
+  }
+
+  private Linux_Util_lib init() {
+    try {
+      Native.loadLibrary("util", Linux_Util_lib.class);
+    }
+    catch (Exception ignored) {
+    }
+    return null;
   }
 
   // METHODS
@@ -242,7 +255,10 @@ public class OSFacadeImpl implements PtyHelpers.OSFacade {
 
   @Override
   public int login_tty(int fd) {
-    return m_Utillib.login_tty(fd);
+    if (m_Utillib != null) {
+      return m_Utillib.login_tty(fd);
+    }
+    return m_Clib.login_tty(fd);
   }
 
   @Override
