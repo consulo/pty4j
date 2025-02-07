@@ -96,8 +96,8 @@ public class OSFacadeImpl implements PtyHelpers.OSFacade {
 
   // VARIABLES
 
-  private static OpenBSD_C_lib m_Clib = (OpenBSD_C_lib) Native.loadLibrary("c", OpenBSD_C_lib.class);
-  private static OpenBSD_Util_lib m_Utillib = (OpenBSD_Util_lib)Native.loadLibrary("util", OpenBSD_Util_lib.class);
+  private static OpenBSD_C_lib m_Clib = Native.load("c", OpenBSD_C_lib.class);
+  private static OpenBSD_Util_lib m_Utillib = Native.load("util", OpenBSD_Util_lib.class);
 
   // CONSTUCTORS
 
