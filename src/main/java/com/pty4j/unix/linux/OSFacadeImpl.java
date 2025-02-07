@@ -32,7 +32,7 @@ import jtermios.JTermios;
 
 
 /**
- * Provides a {@link com.pty4j.unix.PtyHelpers.OSFacade} implementation for Linux.
+ * Provides a {@link PtyHelpers.OSFacade} implementation for Linux.
  */
 public class OSFacadeImpl implements PtyHelpers.OSFacade {
   // INNER TYPES
@@ -94,7 +94,7 @@ public class OSFacadeImpl implements PtyHelpers.OSFacade {
   
   // VARIABLES
 
-  private final C_lib m_Clib = Native.loadLibrary("c", C_lib.class);
+  private final C_lib m_Clib = Native.load("c", C_lib.class);
 
   private final Linux_Util_lib m_Utillib;
 
@@ -117,14 +117,14 @@ public class OSFacadeImpl implements PtyHelpers.OSFacade {
     PtyHelpers.ECHOKE = 0x01;
     PtyHelpers.ECHOCTL = 0x40;
 
-    m_Utillib = init();
+    m_Utillib = createUtil();
   }
 
-  private Linux_Util_lib init() {
+  private Linux_Util_lib createUtil() {
     try {
-      Native.loadLibrary("util", Linux_Util_lib.class);
+      return Native.load("util", Linux_Util_lib.class);
     }
-    catch (Exception ignored) {
+    catch (Error ignored) {
     }
     return null;
   }
