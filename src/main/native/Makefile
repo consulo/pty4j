@@ -27,8 +27,8 @@ ARCH_FLAG_X86_64 = -target x86_64-apple-macos10.9
 ARCH_FLAG_ARM64 = -target arm64-apple-macos11
 
 INSTALL_DIR_X86 = ../os/$(OS)/$(ARCH_X86)
-INSTALL_DIR_X86_64 = ../os/$(OS)/x86-64
-INSTALL_DIR_ARM64 = ../os/$(OS)/aarch64
+INSTALL_DIR_X86_64 = ../os/$(OS)
+INSTALL_DIR_ARM64 = ../os/$(OS)
 INSTALL_DIR_LINUX_X86 = ../os/$(LINUX)/$(ARCH_X86)
 INSTALL_DIR_LINUX_X86_64 = ../os/$(LINUX)/$(ARCH_X86_64)
 INSTALL_DIR_LINUX_ARM64 = ../os/$(LINUX)/$(ARCH_ARM64)
