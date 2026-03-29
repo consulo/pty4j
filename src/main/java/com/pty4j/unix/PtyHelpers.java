@@ -20,23 +20,18 @@
  */
 package com.pty4j.unix;
 
-
+import com.pty4j.PtyProcess;
 import com.pty4j.WinSize;
-import com.pty4j.unix.macosx.OSFacadeImpl;
+import com.pty4j.util.LazyValue;
 import com.pty4j.util.PtyUtil;
 import com.sun.jna.Native;
 import com.sun.jna.Platform;
-import com.sun.jna.Structure;
-import com.sun.jna.ptr.IntByReference;
-import jtermios.JTermios;
-import jtermios.Termios;
+import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.File;
-import java.util.Arrays;
-import java.util.List;
-
 
 /**
  * Provides access to the pseudoterminal functionality on POSIX(-like) systems,
@@ -48,50 +43,17 @@ public class PtyHelpers {
   /**
    * Provides a OS-specific interface to the PtyHelpers methods.
    */
-  public static interface OSFacade {
-    /**
-     * Transforms the calling process into a new process.
-     *
-     * @param command the command to execute;
-     * @param argv    the arguments, by convention begins with the command to execute;
-     * @param env     the (optional) environment options.
-     * @return 0 upon success, -1 upon failure (see {@link PtyHelpers#errno()} for
-     *         details).
-     */
-    int execve(String command, String[] argv, String[] env);
-
-    /**
-     * Returns the window size information for the process with the given FD and
-     * stores the results in the given {@link WinSize} structure.
-     *
-     * @param fd the FD of the process to query;
-     * @param ws the WinSize structure to store the results into.
-     * @return 0 upon success, -1 upon failure (see {@link PtyHelpers#errno()} for
-     *         details).
-     */
-    int getWinSize(int fd, WinSize ws);
-
+  public interface OSFacade {
     /**
      * Terminates or signals the process with the given PID.
      *
      * @param pid the process ID to terminate or signal;
      * @param sig the signal number to send, for example, 9 to terminate the
      *            process.
-     * @return a value of <tt>0</tt> upon success, or a non-zero value in case
+     * @return a value of <code>0</code> upon success, or a non-zero value in case
      *         of an error (see {@link PtyHelpers#errno()} for details).
      */
     int kill(int pid, int sig);
-
-    /**
-     * Sets the window size information for the process with the given FD using
-     * the given {@link WinSize} structure.
-     *
-     * @param fd the FD of the process to set the window size for;
-     * @param ws the WinSize structure with information about the window size.
-     * @return 0 upon success, -1 upon failure (see {@link PtyHelpers#errno()} for
-     *         details).
-     */
-    int setWinSize(int fd, WinSize ws);
 
     /**
      * Waits until the process with the given PID is stopped.
@@ -105,7 +67,7 @@ public class PtyHelpers {
      */
     int waitpid(int pid, int[] stat, int options);
 
-    int sigprocmask(int how, IntByReference set, IntByReference oldset);
+    int sigprocmask(int how, com.sun.jna.ptr.IntByReference set, com.sun.jna.ptr.IntByReference oldset);
 
     String strerror(int errno);
 
@@ -127,8 +89,6 @@ public class PtyHelpers {
 
     int setsid();
 
-    void execv(String path, String[] argv);
-
     int getpid();
 
     int setpgid(int pid, int pgid);
@@ -142,6 +102,25 @@ public class PtyHelpers {
     int login_tty(int fd);
 
     void chdir(String dirpath);
+
+    default int read(int fd, byte[] buffer, int len) {
+      return CLibrary.read(fd, buffer, len);
+    }
+
+    default int errno() {
+      return CLibrary.errno();
+    }
+
+  }
+
+  public static class TerminalSettings {
+    public int c_iflag;
+    public int c_oflag;
+    public int c_cflag;
+    public int c_lflag;
+    public byte[] c_cc = new byte[20];
+    public int c_ispeed;
+    public int c_ospeed;
   }
 
   // CONSTANTS
@@ -164,7 +143,6 @@ public class PtyHelpers {
   public static int HUPCL = 0x00004000;
 
   public static int IUTF8 = 0x00004000;
-
 
   private static final int STDIN_FILENO = 0;
   private static final int STDOUT_FILENO = 1;
@@ -192,88 +170,67 @@ public class PtyHelpers {
   public static int WNOHANG = 1;
   public static int WUNTRACED = 2;
 
-  // VARIABLES
-
-  private static OSFacade ourOsFacade;
-
-  // METHODS
-
-  static {
+  private static final LazyValue<OSFacade> OS_FACADE_VALUE = new LazyValue<>(() -> {
     if (Platform.isMac()) {
-      ourOsFacade = new OSFacadeImpl();
+      return new com.pty4j.unix.macosx.OSFacadeImpl();
     }
-    else if (Platform.isFreeBSD()) {
-      ourOsFacade = new com.pty4j.unix.freebsd.OSFacadeImpl();
+    if (Platform.isFreeBSD()) {
+      return new com.pty4j.unix.freebsd.OSFacadeImpl();
     }
-    else if (Platform.isOpenBSD()) {
-      ourOsFacade = new com.pty4j.unix.openbsd.OSFacadeImpl();
+    if (Platform.isOpenBSD()) {
+      return new com.pty4j.unix.openbsd.OSFacadeImpl();
     }
-    else if (Platform.isLinux()) {
-      ourOsFacade = new com.pty4j.unix.linux.OSFacadeImpl();
+    if (Platform.isLinux() || Platform.isAndroid()) {
+      return new com.pty4j.unix.linux.OSFacadeImpl();
     }
-    else if (Platform.isWindows()) {
+    if (Platform.isWindows()) {
       throw new IllegalArgumentException("WinPtyProcess should be used on Windows");
     }
-    else {
-      throw new RuntimeException("Pty4J has no support for OS " + System.getProperty("os.name"));
-    }
-  }
+    throw new RuntimeException("Pty4J has no support for OS " + System.getProperty("os.name"));
+  });
 
-  private static PtyExecutor myPtyExecutor;
+  private static final LazyValue<PtyExecutor> PTY_EXECUTOR_VALUE = new LazyValue<>(() -> {
+    String libraryName = Platform.isMac() ? "libpty.dylib" : "libpty.so";
+    File libraryFile = PtyUtil.resolveNativeFile(libraryName);
+    return new NativePtyExecutor(libraryFile.getAbsolutePath());
+  });
 
   static {
     try {
-      File lib = PtyUtil.resolveNativeLibrary();
+      getOsFacade();
+    }
+    catch (Throwable t) {
+      LOG.error(t.getMessage(), t.getCause());
+    }
+    try {
+      getPtyExecutor();
+    }
+    catch (Throwable t) {
+      LOG.error(t.getMessage(), t.getCause());
+    }
+  }
 
-      myPtyExecutor = new NativePtyExecutor(lib.getAbsolutePath());
+  @NotNull
+  private static OSFacade getOsFacade() {
+    try {
+      return OS_FACADE_VALUE.getValue();
     }
-    catch (Exception e) {
-      LOG.error("Can't load native pty executor library", e);
-      myPtyExecutor = null;
+    catch (Throwable t) {
+      throw new RuntimeException("Cannot load implementation of " + OSFacade.class, t);
     }
-    
-    if (myPtyExecutor == null) {
-      LOG.warn("Using JNA version of PtyExecutor");
-      myPtyExecutor = new JnaPtyExecutor();
+  }
+
+  @NotNull static PtyExecutor getPtyExecutor() {
+    try {
+      return PTY_EXECUTOR_VALUE.getValue();
+    }
+    catch (Throwable t) {
+      throw new RuntimeException("Cannot load native pty executor library", t);
     }
   }
 
   public static OSFacade getInstance() {
-    return ourOsFacade;
-  }
-
-  public static Termios createTermios() {
-    Termios term = new Termios();
-
-    boolean isUTF8 = true;
-    term.c_iflag = JTermios.ICRNL | JTermios.IXON | JTermios.IXANY | IMAXBEL | JTermios.BRKINT | (isUTF8 ? IUTF8 : 0);
-    term.c_oflag = JTermios.OPOST | ONLCR;
-    term.c_cflag = JTermios.CREAD | JTermios.CS8 | HUPCL;
-    term.c_lflag = JTermios.ICANON | JTermios.ISIG | JTermios.IEXTEN | JTermios.ECHO | JTermios.ECHOE | ECHOK | ECHOKE | ECHOCTL;
-
-    term.c_cc[JTermios.VEOF] = CTRLKEY('D');
-//    term.c_cc[VEOL] = -1;
-//    term.c_cc[VEOL2] = -1;
-    term.c_cc[VERASE] = 0x7f;           // DEL
-    term.c_cc[VWERASE] = CTRLKEY('W');
-    term.c_cc[VKILL] = CTRLKEY('U');
-    term.c_cc[VREPRINT] = CTRLKEY('R');
-    term.c_cc[VINTR] = CTRLKEY('C');
-    term.c_cc[VQUIT] = 0x1c;           // Control+backslash
-    term.c_cc[VSUSP] = CTRLKEY('Z');
-//    term.c_cc[VDSUSP] = CTRLKEY('Y');
-    term.c_cc[JTermios.VSTART] = CTRLKEY('Q');
-    term.c_cc[JTermios.VSTOP] = CTRLKEY('S');
-//    term.c_cc[VLNEXT] = CTRLKEY('V');
-//    term.c_cc[VDISCARD] = CTRLKEY('O');
-//    term.c_cc[VMIN] = 1;
-//    term.c_cc[VTIME] = 0;
-//    term.c_cc[VSTATUS] = CTRLKEY('T');
-
-    term.c_ispeed = JTermios.B38400;
-    term.c_ospeed = JTermios.B38400;
-
-    return term;
+    return getOsFacade();
   }
 
   private static byte CTRLKEY(char c) {
@@ -284,15 +241,8 @@ public class PtyHelpers {
     return __signo > 32 ? 0 : (1 << (__signo - 1));
   }
 
-  /**
-   * Reports the window size for the given file descriptor.
-   *
-   * @param fd the file descriptor to report the window size for;
-   * @param ws the window size to place the results in.
-   * @return 0 upon success, or -1 upon failure.
-   */
-  public static int getWinSize(int fd, WinSize ws) {
-    return ourOsFacade.getWinSize(fd, ws);
+  public static @NotNull WinSize getWinSize(int fd, @Nullable PtyProcess process) throws UnixPtyException {
+    return getPtyExecutor().getWindowSize(fd, process);
   }
 
   /**
@@ -309,27 +259,16 @@ public class PtyHelpers {
   }
 
   /**
-   * Sets the window size for the given file descriptor.
-   *
-   * @param fd the file descriptor to set the window size for;
-   * @param ws the new window size to set.
-   * @return 0 upon success, or -1 upon failure.
-   */
-  public static int setWinSize(int fd, WinSize ws) {
-    return ourOsFacade.setWinSize(fd, ws);
-  }
-
-  /**
    * Terminates or signals the process with the given PID.
    *
    * @param pid    the process ID to terminate or signal;
    * @param signal the signal number to send, for example, 9 to terminate the
    *               process.
-   * @return a value of <tt>0</tt> upon success, or a non-zero value in case of
+   * @return a value of <code>0</code> upon success, or a non-zero value in case of
    *         an error.
    */
   public static int signal(int pid, int signal) {
-    return ourOsFacade.kill(pid, signal);
+    return getOsFacade().kill(pid, signal);
   }
 
   /**
@@ -342,7 +281,7 @@ public class PtyHelpers {
    * @param options the bit mask with options.
    */
   public static int waitpid(int pid, int[] stat, int options) {
-    return ourOsFacade.waitpid(pid, stat, options);
+    return getOsFacade().waitpid(pid, stat, options);
   }
 
   /**
@@ -355,47 +294,11 @@ public class PtyHelpers {
   }
 
   public static String strerror() {
-    return ourOsFacade.strerror(errno());
-  }
-
-  /**
-   * Not public as this method <em>replaces</em> the current process and
-   * therefore should be used with caution.
-   *
-   * @param command the command to execute.
-   */
-  private static int execve(String command, String[] argv, String[] env) {
-    return ourOsFacade.execve(command, argv, env);
+    return getOsFacade().strerror(errno());
   }
 
   public static void chdir(String dirpath) {
-    ourOsFacade.chdir(dirpath);
-  }
-
-  /**
-   * Processes the given command + arguments and crafts a valid array of
-   * arguments as expected by {@link #execve(String, String[], String[])}.
-   *
-   * @param command   the command to run, cannot be <code>null</code>;
-   * @param arguments the command line arguments, can be <code>null</code>.
-   * @return a new arguments array, never <code>null</code>.
-   */
-  private static String[] processArgv(String command, String[] arguments) {
-    final String[] argv;
-    if (arguments == null) {
-      argv = new String[]{command};
-    }
-    else {
-      if (!command.equals(arguments[0])) {
-        argv = new String[arguments.length + 1];
-        argv[0] = command;
-        System.arraycopy(arguments, 0, argv, 1, arguments.length);
-      }
-      else {
-        argv = Arrays.copyOf(arguments, arguments.length);
-      }
-    }
-    return argv;
+    getOsFacade().chdir(dirpath);
   }
 
   public static int execPty(String full_path,
@@ -407,35 +310,7 @@ public class PtyHelpers {
                             String err_pts_name,
                             int err_fdm,
                             boolean console) {
-    return myPtyExecutor.execPty(full_path, argv, envp, dirpath, pts_name, fdm, err_pts_name, err_fdm, console);
-  }
-
-  public static class winsize extends Structure {
-    public short ws_row;
-    public short ws_col;
-    public short ws_xpixel;
-    public short ws_ypixel;
-
-    @Override
-    protected List<String> getFieldOrder() {
-      return Arrays.asList("ws_row", "ws_col", "ws_xpixel", "ws_ypixel");
-    }
-
-    public winsize() {
-    }
-
-    public winsize(WinSize ws) {
-      ws_row = ws.ws_row;
-      ws_col = ws.ws_col;
-      ws_xpixel = ws.ws_xpixel;
-      ws_ypixel = ws.ws_ypixel;
-    }
-
-    public void update(WinSize winSize) {
-      winSize.ws_col = ws_col;
-      winSize.ws_row = ws_row;
-      winSize.ws_xpixel = ws_xpixel;
-      winSize.ws_ypixel = ws_ypixel;
-    }
+    PtyExecutor executor = getPtyExecutor();
+    return executor.execPty(full_path, argv, envp, dirpath, pts_name, fdm, err_pts_name, err_fdm, console);
   }
 }

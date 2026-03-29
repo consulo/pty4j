@@ -1,5 +1,8 @@
 # Pty4J - Pseudo terminal(PTY) implementation in Java.
 
+[![official JetBrains project](http://jb.gg/badges/official.svg)](https://confluence.jetbrains.com/display/ALL/JetBrains+on+GitHub)
+
+
 This is a Java implementation of PTY. Written in JNA with native code to make fork of a process.
 
 It is based on two projects that provide the same functionality: [JPty](https://github.com/jawi/JPty)
@@ -18,50 +21,48 @@ Also pty4j implements java interface for pty for windows, using [WinPty](https:/
 
 ## Dependencies
 
-This library depends on JTermios, part of the PureJavacomm library found at
-<https://github.com/nyholku/purejavacomm>. A binary release of this library,
-along with its dependency JNA, is made part of this repository, and can be 
-found in the lib-directory.
-
 Windows pty implementation used here is the magnificent WinPty library written by Ryan Prichard: https://github.com/rprichard/winpty
+
+## Adding Pty4J to your build
+
+The releases are published to Maven Central: [org.jetbrains.pty4j:pty4j](https://search.maven.org/artifact/org.jetbrains.pty4j/pty4j).
+
+### Maven
+
+```
+<dependency>
+  <groupId>org.jetbrains.pty4j</groupId>
+  <artifactId>pty4j</artifactId>
+  <version>0.13.0</version>
+</dependency>
+```
+
+### Gradle
+
+```
+dependencies {
+  implementation 'org.jetbrains.pty4j:pty4j:0.13.0'
+}
+```
 
 ## Usage
 
 Using this library is relatively easy:
 
-    // The command to run in a PTY...
     String[] cmd = { "/bin/sh", "-l" };
-    // The initial environment to pass to the PTY child process...
-    String[] env = { "TERM=xterm" };
+    Map<String, String> env = new HashMap<>(System.getenv());
+    env.put("TERM", "xterm");
+    PtyProcess process = new PtyProcessBuilder().setCommand(cmd).setEnvironment(env).start();
 
-    PtyProcess pty = PtyProcess.exec(cmd, env);
-
-    OutputStream os = pty.getOutputStream();
-    InputStream is = pty.getInputStream();
+    OutputStream os = process.getOutputStream();
+    InputStream is = process.getInputStream();
     
     // ... work with the streams ...
     
-    // wait until the PTY child process terminates...
-    int result = pty.waitFor();
-    
-    // free up resources.
-    pty.close();
+    // wait until the PTY child process is terminated
+    int result = process.waitFor();
 
-The operating systems currently supported by pty4j are: Linux, OSX and
-Windows.  
-
-**Note that this library is not yet fully tested on all platforms.**
-
-## Changes
-
-    0.7 | 14-06-2016 | Updated to match the new winpty API
-    0.6 | 08-02-2016 | Correct NamedPipe usage for winpty
-                       FreeBSD support
-    0.5 | 28-09-2015 | Supports JNA 4.1, Cygwin support, fixes
-    0.4 | 13-01-2015 | Fixes
-    0.3 | 16-08-2013 | Native code for fork and process exec.
-    0.2 | 03-08-2013 | Linux and Windows supported.
-    0.1 | 20-07-2013 | Initial version.
+The operating systems currently supported by pty4j are: Linux, OSX, Windows and FreeBSD.
 
 ## License
 

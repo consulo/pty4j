@@ -11,7 +11,7 @@
 #*******************************************************************************/
 
 # Defaults which can be overridden.
-OS = macosx
+OS = darwin
 LINUX=linux
 ARCH_X86 = x86
 ARCH_X86_64 = x86_64
@@ -28,20 +28,16 @@ ARCH_FLAG_ARM64 = -target arm64-apple-macos11
 
 INSTALL_DIR_X86 = ../os/$(OS)/$(ARCH_X86)
 INSTALL_DIR_X86_64 = ../os/$(OS)
-INSTALL_DIR_ARM64 = ../os/$(OS)
 INSTALL_DIR_LINUX_X86 = ../os/$(LINUX)/$(ARCH_X86)
 INSTALL_DIR_LINUX_X86_64 = ../os/$(LINUX)/$(ARCH_X86_64)
-INSTALL_DIR_LINUX_ARM64 = ../os/$(LINUX)/$(ARCH_ARM64)
 
 LIB_NAME_PTY = libpty.so
 LIB_NAME_PTY_DARWIN = libpty.dylib
 LIB_NAME_FULL_PTY_X86 = $(INSTALL_DIR_X86)/libpty.dylib
 LIB_NAME_FULL_PTY_X86_64 = $(INSTALL_DIR_X86_64)/libpty.dylib
-LIB_NAME_FULL_PTY_ARM64 = $(INSTALL_DIR_ARM64)/libpty.dylib
 
 LIB_NAME_FULL_PTY_LINUX_X86 = $(INSTALL_DIR_LINUX_X86)/libpty.so
 LIB_NAME_FULL_PTY_LINUX_X86_64 = $(INSTALL_DIR_LINUX_X86_64)/libpty.so
-LIB_NAME_FULL_PTY_LINUX_ARM64 = $(INSTALL_DIR_LINUX_ARM64)/libpty.so
 
 OBJS_PTY_X86 = exec_pty_$(ARCH_X86).o openpty_$(ARCH_X86).o pfind_$(ARCH_X86).o
 OBJS_PTY_X86_64 = exec_pty_$(ARCH_X86_64).o openpty_$(ARCH_X86_64).o pfind_$(ARCH_X86_64).o
@@ -51,7 +47,7 @@ OBJS_X86 = $(OBJS_PTY_X86)
 OBJS_X86_64 = $(OBJS_PTY_X86_64)
 OBJS_ARM64 = $(OBJS_PTY_ARM64)
 
-all: x86 x86_64 arm64
+all: x86 x86_64
 
 linux: linux_x86 linux_x86_64
 
@@ -59,11 +55,8 @@ x86: $(LIB_NAME_FULL_PTY_X86)
 
 x86_64: $(LIB_NAME_FULL_PTY_X86_64)
 
-arm64: $(LIB_NAME_FULL_PTY_ARM64)
-
 linux_x86: $(LIB_NAME_FULL_PTY_LINUX_X86)
 linux_x86_64: $(LIB_NAME_FULL_PTY_LINUX_X86_64)
-linux_arm64: $(LIB_NAME_FULL_PTY_LINUX_ARM64)
 
 rebuild: clean all
 
@@ -71,13 +64,11 @@ $(LIB_NAME_FULL_PTY_X86): $(OBJS_PTY_X86)
 	mkdir -p $(INSTALL_DIR_X86)
 	$(CC) -dynamiclib  $(ARCH_FLAG_X86) -o $(LIB_NAME_FULL_PTY_X86) $(OBJS_PTY_X86) -lc
 
-$(LIB_NAME_FULL_PTY_X86_64): $(OBJS_PTY_X86_64)
-	mkdir -p $(INSTALL_DIR_X86_64)
-	$(CC) -dynamiclib $(ARCH_FLAG_X86_64) -o $(LIB_NAME_FULL_PTY_X86_64) $(OBJS_PTY_X86_64) -lc
-
-$(LIB_NAME_FULL_PTY_ARM64): $(OBJS_PTY_ARM64)
-	mkdir -p $(INSTALL_DIR_ARM64)
-	$(CC) -dynamiclib $(ARCH_FLAG_ARM64) -o $(LIB_NAME_FULL_PTY_X86_64) $(OBJS_PTY_ARM64) -lc
+$(LIB_NAME_FULL_PTY_X86_64): $(OBJS_PTY_X86_64) $(OBJS_PTY_ARM64)
+	mkdir -p $(INSTALL_DIR_X86_64) $(ARCH_X86_64) $(ARCH_ARM64)
+	$(CC) -dynamiclib $(ARCH_FLAG_X86_64) -o $(ARCH_X86_64)/$(LIB_NAME_PTY_DARWIN) $(OBJS_PTY_X86_64) -lc
+	$(CC) -dynamiclib $(ARCH_FLAG_ARM64) -o $(ARCH_ARM64)/$(LIB_NAME_PTY_DARWIN) $(OBJS_PTY_ARM64) -lc
+	lipo -create -output $(LIB_NAME_FULL_PTY_X86_64) $(ARCH_X86_64)/$(LIB_NAME_PTY_DARWIN) $(ARCH_ARM64)/$(LIB_NAME_PTY_DARWIN)
 
 $(LIB_NAME_FULL_PTY_LINUX_X86): $(OBJS_PTY_X86)
 	mkdir -p $(INSTALL_DIR_LINUX_X86)
@@ -86,10 +77,6 @@ $(LIB_NAME_FULL_PTY_LINUX_X86): $(OBJS_PTY_X86)
 $(LIB_NAME_FULL_PTY_LINUX_X86_64): $(OBJS_PTY_X86_64)
 	mkdir -p $(INSTALL_DIR_LINUX_X86_64)
 	$(CC) -g -shared -Wl,-soname,$(LIB_NAME_PTY) $(LDFLAGS) -o $(LIB_NAME_FULL_PTY_LINUX_X86_64) $(OBJS_PTY_X86_64)
-
-$(LIB_NAME_FULL_PTY_LINUX_ARM64): $(OBJS_PTY_ARM64)
-	mkdir -p $(INSTALL_DIR_LINUX_ARM64)
-	$(CC) -g -shared -Wl,-soname,$(LIB_NAME_PTY) $(LDFLAGS) -o $(LIB_NAME_FULL_PTY_LINUX_ARM64) $(OBJS_PTY_ARM64)
 
 exec_pty_$(ARCH_X86).o: exec_pty.c
 	$(CC) $(CFLAGS) $(ARCH_FLAG_X86) $(CPPFLAGS) -c -o $@ exec_pty.c
@@ -120,5 +107,4 @@ pfind_$(ARCH_ARM64).o: pfind.c
 
 clean :
 	$(RM) $(OBJS_X86) $(LIB_NAME_FULL_PTY_X86)
-	$(RM) $(OBJS_X86_64) $(LIB_NAME_FULL_PTY_X86_64)
-	$(RM) $(OBJS_ARM64) $(LIB_NAME_FULL_PTY_ARM64)
+	$(RM) $(OBJS_X86_64) $(OBJS_ARM64) $(LIB_NAME_PTY_X86_64) $(ARCH_X86_64)/$(LIB_NAME_PTY_DARWIN) $(ARCH_ARM64)/$(LIB_NAME_PTY_DARWIN)

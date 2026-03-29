@@ -1,63 +1,52 @@
-/*******************************************************************************
+/*
  * Copyright (c) 2000, 2011 QNX Software Systems and others.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Eclipse Public License v1.0
  * which accompanies this distribution, and is available at
  * http://www.eclipse.org/legal/epl-v10.html
- *******************************************************************************/
+ */
 package com.pty4j.unix;
 
 import com.pty4j.PtyProcess;
+import com.pty4j.PtyProcessOptions;
 import com.pty4j.WinSize;
+import com.pty4j.util.PtyUtil;
+import com.sun.jna.Platform;
+import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.util.Arrays;
+import java.util.Objects;
 
-public class UnixPtyProcess extends PtyProcess {
-  public int NOOP = 0;
-  public int SIGHUP = 1;
-  public int SIGINT = 2;
-  public int SIGKILL = 9;
-  public int SIGTERM = 15;
+public final class UnixPtyProcess extends PtyProcess {
+  private static final int NOOP = 0;
+  
+  // Signals with portable numbers (https://en.wikipedia.org/wiki/Signal_(IPC)#POSIX_signals)
+  private static final int SIGHUP = 1;
+  private static final int SIGKILL = 9;
+  private static final int SIGTERM = 15;
+  private static final Logger logger = LoggerFactory.getLogger(UnixPtyProcess.class);
 
-  /**
-   * On Windows, what this does is far from easy to explain. Some of the logic is in the JNI code, some in the
-   * spawner.exe code.
-   * <p/>
-   * <ul>
-   * <li>If the process this is being raised against was launched by us (the Spawner)
-   * <ul>
-   * <li>If the process is a cygwin program (has the cygwin1.dll loaded), then issue a 'kill -SIGINT'. If the 'kill'
-   * utility isn't available, send the process a CTRL-C
-   * <li>If the process is <i>not</i> a cygwin program, send the process a CTRL-C
-   * </ul>
-   * <li>If the process this is being raised against was <i>not</i> launched by us, use DebugBreakProcess to interrupt
-   * it (sending a CTRL-C is easy only if we share a console with the target process)
-   * </ul>
-   * <p/>
-   * On non-Windows, raising this just raises a POSIX SIGINT
-   */
-  public int INT = 2;
-
-  /**
-   * A fabricated signal number for use on Windows only. Tells the starter program to send a CTRL-C regardless of
-   * whether the process is a Cygwin one or not.
-   *
-   * @since 5.2
-   */
-  public int CTRLC = 1000; // arbitrary high number to avoid collision
+  private final boolean myConsoleMode;
+  private final @Nullable ProcessBuilderUnixLauncher myLauncher;
 
   private int pid = 0;
-  private int myStatus;
+  private int myExitCode;
   private boolean isDone;
   private OutputStream out;
   private InputStream in;
   private InputStream err;
-  private Pty myPty;
-  private Pty myErrPty;
+  private final Pty myPty;
+  private final Pty myErrPty;
 
-  public UnixPtyProcess(String[] cmdarray, String[] envp, String dir, Pty pty, Pty errPty) throws IOException {
+  @Deprecated
+  public UnixPtyProcess(String[] cmdarray, String[] envp, String dir, Pty pty, Pty errPty, boolean consoleMode) throws IOException {
+    myConsoleMode = consoleMode;
     if (dir == null) {
       dir = ".";
     }
@@ -66,7 +55,40 @@ public class UnixPtyProcess extends PtyProcess {
     }
     myPty = pty;
     myErrPty = errPty;
-    execInPty(cmdarray, envp, dir, pty, errPty);
+    myLauncher = null;
+    execInPty(cmdarray, envp, dir, pty, errPty, null, null);
+  }
+
+  public UnixPtyProcess(@NotNull PtyProcessOptions options, boolean consoleMode) throws IOException {
+    myConsoleMode = consoleMode;
+    myPty = new Pty(consoleMode, options.isUnixOpenTtyToPreserveOutputAfterTermination());
+    myErrPty = options.isRedirectErrorStream() || !consoleMode ? null : new Pty();
+    String dir = Objects.requireNonNullElse(options.getDirectory(), ".");
+    ProcessBuilderUnixLauncher launcher = null;
+    if (Platform.isMac() && Platform.isIntel() && options.isSpawnProcessUsingJdkOnMacIntel()) {
+      try {
+        launcher = new ProcessBuilderUnixLauncher(
+          Arrays.asList(options.getCommand()), options.getEnvironment(), dir,
+          myPty, myErrPty,
+          consoleMode,
+          options.getInitialColumns(), options.getInitialRows(), this
+        );
+      }
+      catch (Exception e) {
+        logger.info("Cannot use JDK launcher to run pty4j", e);
+      }
+    }
+    myLauncher = launcher;
+    if (myLauncher == null) {
+      execInPty(options.getCommand(), PtyUtil.toStringArray(options.getEnvironment()), dir, myPty, myErrPty,
+                options.getInitialColumns(), options.getInitialRows());
+    }
+    else {
+      launcher.getProcess().onExit().whenComplete((process, e) -> {
+        myPty.breakRead();
+        if (myErrPty != null) myErrPty.breakRead();
+      });
+    }
   }
 
   public Pty getPty() {
@@ -106,9 +128,9 @@ public class UnixPtyProcess extends PtyProcess {
    */
   @Override
   public synchronized InputStream getErrorStream() {
-    if (null == err) {
-      if (!myPty.isConsole()) {
-        // If Pty is used and it's not in "Console" mode, then stderr is redirected to the Pty's output stream.
+    if (err == null) {
+      if (myErrPty == null) {
+        // If no separate errPty, then redirect stderr to stdout.
         // Therefore, return a dummy stream for error stream.
         err = new InputStream() {
           @Override
@@ -124,16 +146,19 @@ public class UnixPtyProcess extends PtyProcess {
     return err;
   }
 
-  /**
-   * See java.lang.Process#waitFor ();
-   */
   @Override
-  public synchronized int waitFor() throws InterruptedException {
+  public int waitFor() throws InterruptedException {
+    if (myLauncher != null) {
+      return myLauncher.getProcess().waitFor();
+    }
+    return waitForWithoutLauncher();
+  }
+
+  private synchronized int waitForWithoutLauncher() throws InterruptedException {
     while (!isDone) {
       wait();
     }
-
-    return myStatus;
+    return myExitCode;
   }
 
   /**
@@ -141,72 +166,46 @@ public class UnixPtyProcess extends PtyProcess {
    */
   @Override
   public synchronized int exitValue() {
-    if (!isDone) {
-      throw new IllegalThreadStateException("Process not Terminated");
+    if (myLauncher != null) {
+      return myLauncher.getProcess().exitValue();
     }
-    return myStatus;
+    if (!isDone) {
+      throw new IllegalThreadStateException("process hasn't exited");
+    }
+    return myExitCode;
   }
 
   /**
    * See java.lang.Process#destroy ();
-   * <p/>
+   * <p>
    * Clients are responsible for explicitly closing any streams that they have requested through getErrorStream(),
    * getInputStream() or getOutputStream()
    */
   @Override
   public synchronized void destroy() {
-    // Sends the TERM
-    terminate();
-
+    Pty.raise(pid(), SIGTERM);
     closeUnusedStreams();
-
-    // Grace before using the heavy gone.
-    if (!isDone) {
-      try {
-        wait(1000);
-      }
-      catch (InterruptedException e) {
-      }
-    }
-    if (!isDone) {
-      kill();
-    }
-  }
-
-  public int interrupt() {
-    return Pty.raise(pid, INT);
-  }
-
-  public int interruptCTRLC() {
-    //    if (Platform.getOS().equals(Platform.OS_WIN32)) {
-    //      return raise(pid, CTRLC);
-    //    }
-    return interrupt();
-  }
-
-  public int hangup() {
-    return Pty.raise(pid, SIGHUP);
-  }
-
-  public int kill() {
-    return Pty.raise(pid, SIGKILL);
-  }
-
-  public int terminate() {
-    return Pty.raise(pid, SIGTERM);
   }
 
   @Override
-  public boolean isRunning() {
-    return (Pty.raise(pid, NOOP) == 0);
+  public synchronized Process destroyForcibly() {
+    Pty.raise(pid(), SIGKILL);
+    closeUnusedStreams();
+    return this;
   }
 
-  private void execInPty(String[] command, String[] environment, String workingDirectory, Pty pty, Pty errPty) throws IOException {
-    String cmd = command[0];
-    SecurityManager s = System.getSecurityManager();
-    if (s != null) {
-      s.checkExec(cmd);
-    }
+  public int hangup() {
+    return Pty.raise(pid(), SIGHUP);
+  }
+
+  @Override
+  public boolean isConsoleMode() {
+    return myConsoleMode;
+  }
+
+  private void execInPty(String[] command, String[] environment, String workingDirectory, Pty pty, Pty errPty,
+                         @Nullable Integer initialColumns,
+                         @Nullable Integer initialRows) throws IOException {
     if (environment == null) {
       environment = new String[0];
     }
@@ -214,9 +213,8 @@ public class UnixPtyProcess extends PtyProcess {
     final int masterFD = pty.getMasterFD();
     final String errSlaveName = errPty == null ? null : errPty.getSlaveName();
     final int errMasterFD = errPty == null ? -1 : errPty.getMasterFD();
-    final boolean console = pty.isConsole();
     // int fdm = pty.get
-    Reaper reaper = new Reaper(command, environment, workingDirectory, slaveName, masterFD, errSlaveName, errMasterFD, console);
+    Reaper reaper = new Reaper(command, environment, workingDirectory, slaveName, masterFD, errSlaveName, errMasterFD, myConsoleMode);
 
     reaper.setDaemon(true);
     reaper.start();
@@ -230,9 +228,30 @@ public class UnixPtyProcess extends PtyProcess {
           Thread.currentThread().interrupt();
         }
       }
+
+      boolean init = Boolean.getBoolean("unix.pty.init") || initialColumns != null || initialRows != null;
+      if (init) {
+        int cols = initialColumns != null ? initialColumns : Integer.getInteger("unix.pty.cols", 80);
+        int rows = initialRows != null ? initialRows : Integer.getInteger("unix.pty.rows", 25);
+        WinSize size = new WinSize(cols, rows);
+
+        // On OSX, there is a race condition with pty initialization
+        // If we call com.pty4j.unix.Pty.setTerminalSize(com.pty4j.WinSize) too early, we can get ENOTTY
+        for (int attempt = 0; attempt < 1000; attempt++) {
+          try {
+            myPty.setWindowSize(size, this);
+            break;
+          }
+          catch (UnixPtyException e) {
+            if (e.getErrno() != CLibrary.ENOTTY) {
+              break;
+            }
+          }
+        }
+      }
     }
     if (pid == -1) {
-      throw new IOException("Exec_tty error:" + reaper.getErrorMessage());
+      throw new IOException("Exec_tty error:" + reaper.getErrorMessage(), reaper.getException());
     }
   }
 
@@ -296,24 +315,32 @@ public class UnixPtyProcess extends PtyProcess {
     return PtyHelpers.execPty(cmd[0], cmd, envp, dirname, slaveName, masterFD, errSlaveName, errMasterFD, console);
   }
 
-  int waitFor(int processID) {
-    return Pty.wait0(processID);
+  @Override
+  public void setWinSize(@NotNull WinSize winSize) {
+    try {
+      myPty.setWindowSize(winSize, this);
+    }
+    catch (UnixPtyException e) {
+      throw new IllegalStateException(e);
+    }
+    if (myErrPty != null) {
+      try {
+        myErrPty.setWindowSize(winSize, this);
+      }
+      catch (UnixPtyException e) {
+        throw new IllegalStateException(e);
+      }
+    }
   }
 
-
   @Override
-  public void setWinSize(WinSize winSize) {
-    myPty.setTerminalSize(winSize);
+  public @NotNull WinSize getWinSize() throws IOException {
+    return myPty.getWinSize(this);
   }
 
   @Override
-  public WinSize getWinSize() throws IOException {
-    return myPty.getWinSize();
-  }
-
-  @Override
-  public int getPid() {
-    return pid;
+  public long pid() {
+    return myLauncher != null ? myLauncher.getProcess().pid() : pid;
   }
 
   // Spawn a thread to handle the forking and waiting.
@@ -332,7 +359,7 @@ public class UnixPtyProcess extends PtyProcess {
 
     public Reaper(String[] command, String[] environment, String workingDirectory, String slaveName, int masterFD, String errSlaveName,
                   int errMasterFD, boolean console) {
-      super("PtyProcess Reaper");
+      super("PtyProcess Reaper for " + Arrays.toString(command));
       myCommand = command;
       myEnv = environment;
       myDir = workingDirectory;
@@ -363,7 +390,7 @@ public class UnixPtyProcess extends PtyProcess {
       }
       if (pid != -1) {
         // Sync with spawner and notify when done.
-        myStatus = waitFor(pid);
+        myExitCode = PtyHelpers.getPtyExecutor().waitForProcessExitAndGetExitCode(pid);
         synchronized (UnixPtyProcess.this) {
           isDone = true;
           UnixPtyProcess.this.notifyAll();
@@ -375,6 +402,11 @@ public class UnixPtyProcess extends PtyProcess {
 
     public String getErrorMessage() {
       return myException != null ? myException.getMessage() : "Unknown reason";
+    }
+
+    @Nullable
+    public Throwable getException() {
+      return myException;
     }
   }
 }

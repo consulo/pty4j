@@ -1,6 +1,7 @@
-bin
-bin_test
-generated
-target/
+build
+.gradle
+.idea/
+out/
+pty4j.iml
 .consulo/
-
+target/

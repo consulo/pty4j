@@ -1,37 +1,38 @@
-/*******************************************************************************
+/*
  * Copyright (c) 2002, 2010 QNX Software Systems and others.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Eclipse Public License v1.0
  * which accompanies this distribution, and is available at
  * http://www.eclipse.org/legal/epl-v10.html
- *******************************************************************************/
+ */
 package com.pty4j.unix;
 
+import com.pty4j.PtyProcess;
 import com.pty4j.WinSize;
-import com.pty4j.util.Pair;
-import jtermios.FDSet;
-import jtermios.JTermios;
-import jtermios.Termios;
+import kotlin.Pair;
+import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 import java.io.IOException;
+import java.io.InputStream;
+import java.io.OutputStream;
 import java.util.Locale;
 
 
 /**
  * Pty - pseudo terminal support.
  */
-public class Pty {
-  private final boolean myConsole;
-  private String mySlaveName;
-  private PTYInputStream myIn;
-  private PTYOutputStream myOut;
+public final class Pty {
+
+  private final String mySlaveName;
+  private final PTYInputStream myIn;
+  private final PTYOutputStream myOut;
   private final Object myFDLock = new Object();
   private final Object mySelectLock = new Object();
   private final int[] myPipe = new int[2];
 
   private volatile int myMaster;
-
-  private static boolean setTerminalSizeErrorAlreadyLogged;
+  private volatile int mySlaveFD;
 
   private static final boolean useSelect = isOSXLessThanOrEqualTo106();
 
@@ -47,23 +48,37 @@ public class Pty {
   private static final Object PTSNAME_LOCK = new Object();
 
   public Pty() throws IOException {
-    this(false);
+    this(false, false);
   }
 
+  /**
+   * @deprecated use {@link #Pty()} instead
+   */
+  @Deprecated(forRemoval = true)
   public Pty(boolean console) throws IOException {
-    myConsole = console;
+    this(console, false);
+  }
 
-    Pair<Integer, String> masterSlave = openMaster(console);
-    myMaster = masterSlave.first;
-    mySlaveName = masterSlave.second;
+  Pty(@SuppressWarnings("unused") boolean console,
+      boolean openOpenTtyToPreserveOutputAfterTermination) throws IOException {
+    Pair<Integer, String> masterSlave = openMaster();
+    myMaster = masterSlave.getFirst();
+    mySlaveName = masterSlave.getSecond();
 
     if (mySlaveName == null) {
       throw new IOException("Util.exception.cannotCreatePty");
     }
 
+    // Without this line, on macOS the slave side of the pty will be automatically closed on process termination, and it
+    // will be impossible to read process output after exit. It has a side effect: the child process won't be terminated
+    // until we've read all the output from it.
+    //
+    // See this report for details: https://developer.apple.com/forums/thread/663632
+    mySlaveFD = openOpenTtyToPreserveOutputAfterTermination ? CLibrary.open(mySlaveName, CLibrary.O_WRONLY) : -1;
+
     myIn = new PTYInputStream(this);
     myOut = new PTYOutputStream(this);
-    JTermios.pipe(myPipe);
+    CLibrary.pipe(myPipe);
   }
 
   public String getSlaveName() {
@@ -74,69 +89,44 @@ public class Pty {
     return myMaster;
   }
 
-  /**
-   * @return whether this pseudo terminal is for use with the console.
-   */
-  public final boolean isConsole() {
-    return myConsole;
-  }
-
-  public PTYOutputStream getOutputStream() {
+  public @NotNull OutputStream getOutputStream() {
     return myOut;
   }
 
-  public PTYInputStream getInputStream() {
+  public @NotNull InputStream getInputStream() {
     return myIn;
-  }
-
-  @Deprecated
-  public final void setTerminalSize(int width, int height) {
-    setTerminalSize(new WinSize(width, height, 0, 0));
   }
 
   /**
    * Change terminal window size to given width and height.
    * <p>
    * This should only be used when the pseudo terminal is configured for use with a terminal emulation, i.e. when
-   * {@link #isConsole()} returns {@code false}.
-   * </p>
-   * <p>
-   * <strong>Note:</strong> This method may not be supported on all platforms. Known platforms which support this method
-   * are: {@code linux-x86}, {@code linux-x86_64}, {@code solaris-sparc}, {@code macosx}.
-   * </p>
+   * {@link UnixPtyProcess#isConsoleMode()} returns {@code false}.
    *
-   * @param winSize new size structure.
+   * @param winSize new window size
    */
-  public final void setTerminalSize(WinSize winSize) {
-    try {
-      int res = changeWindowSize(myMaster, winSize);
-      if (res != 0) {
-        throw new IllegalStateException("Can set new window size. ioctl returns " + res + ", errorno=" + JTermios.errno());
-      }
-    } catch (UnsatisfiedLinkError e) {
-      if (!setTerminalSizeErrorAlreadyLogged) {
-        setTerminalSizeErrorAlreadyLogged = true;
-      }
-    }
+  public void setWindowSize(@NotNull WinSize winSize, @Nullable PtyProcess process) throws UnixPtyException {
+    PtyHelpers.getPtyExecutor().setWindowSize(myMaster, winSize, process);
   }
 
 
   /**
    * Returns the current window size of this Pty.
    *
-   * @return a {@link com.pty4j.WinSize} instance with information about the master side
-   * of the Pty, never <code>null</code>.
-   * @throws IOException in case obtaining the window size failed.
+   * @return a {@link com.pty4j.WinSize} instance with information about the master sid of the Pty.
+   * @throws UnixPtyException in case obtaining the window size failed.
    */
-  public WinSize getWinSize() throws IOException {
-    WinSize result = new WinSize();
-    if (PtyHelpers.getWinSize(myMaster, result) < 0) {
-      throw new IOException("Failed to get window size: " + PtyHelpers.errno());
-    }
-    return result;
+  public @NotNull WinSize getWinSize(@Nullable PtyProcess process) throws UnixPtyException {
+    return PtyHelpers.getPtyExecutor().getWindowSize(myMaster, process);
   }
 
-  private Pair<Integer, String> ptyMasterOpen() {
+  /**
+   * Creates a pty pair (master file descriptor and slave path).
+   * If creation fails, the master file descriptor is negative.
+   *
+   * @return the created pty pair
+   */
+  public static Pair<Integer, String> ptyMasterOpen() {
 
     PtyHelpers.OSFacade m_jpty = PtyHelpers.getInstance();
 
@@ -145,24 +135,24 @@ public class Pty {
     int fdm = m_jpty.getpt();
 
     if (fdm < 0) {
-      return Pair.create(-1, name);
+      return new Pair<>(-1, name);
     }
     if (m_jpty.grantpt(fdm) < 0) { /* grant access to slave */
       m_jpty.close(fdm);
-      return Pair.create(-2, name);
+      return new Pair<>(-2, name);
     }
     if (m_jpty.unlockpt(fdm) < 0) { /* clear slave's lock flag */
       m_jpty.close(fdm);
-      return Pair.create(-3, name);
+      return new Pair<>(-3, name);
     }
 
     String ptr = ptsname(m_jpty, fdm);
 
     if (ptr == null) { /* get slave's name */
       m_jpty.close(fdm);
-      return Pair.create(-4, name);
+      return new Pair<>(-4, name);
     }
-    return Pair.create(fdm, ptr);
+    return new Pair<>(fdm, ptr);
   }
 
   private static String ptsname(PtyHelpers.OSFacade m_jpty, int fdm) {
@@ -173,50 +163,17 @@ public class Pty {
   }
 
 
-  public static void setNoEcho(int fd) {
-    Termios stermios = new Termios();
-    if (JTermios.tcgetattr(fd, stermios) < 0) {
-      return;
-    }
-
-	/* turn off echo */
-    stermios.c_lflag &= ~(JTermios.ECHO | JTermios.ECHOE | PtyHelpers.ECHOK | JTermios.ECHONL);
-    /* Turn off the NL to CR/NL mapping ou output.  */
-    /*stermios.c_oflag &= ~(ONLCR);*/
-
-    stermios.c_iflag |= (JTermios.IGNCR);
-
-    JTermios.tcsetattr(fd, JTermios.TCSANOW, stermios);
+  private Pair<Integer, String> openMaster() {
+    return ptyMasterOpen();
   }
 
-  private Pair<Integer, String> openMaster(boolean console) {
-    Pair<Integer, String> master = ptyMasterOpen();
-    if (master.first >= 0) {
-      //       turn off echo
-      if (console) {
-        setNoEcho(master.first);
-      }
-    }
-
-    return master;
-  }
-
-  @Deprecated
-  public static int changeWindowsSize(int fd, int width, int height) {
-    return changeWindowSize(fd, new WinSize(width, height));
-  }
-
-  private static int changeWindowSize(int fd, WinSize ws) {
-    return PtyHelpers.getInstance().setWinSize(fd, ws);
-  }
-
-  public static int raise(int pid, int sig) {
+  static int raise(long pid, int sig) {
     PtyHelpers.OSFacade m_jpty = PtyHelpers.getInstance();
 
-    int status = m_jpty.killpg(pid, sig);
+    int status = m_jpty.killpg((int)pid, sig);
 
     if (status == -1) {
-      status = m_jpty.kill(pid, sig);
+      status = m_jpty.kill((int)pid, sig);
     }
 
     return status;
@@ -230,13 +187,24 @@ public class Pty {
     if (myMaster != -1) {
       synchronized (myFDLock) {
         if (myMaster != -1) {
-          try {
-            int status = close0(myMaster);
-            if (status == -1) {
-              throw new IOException("Close error");
-            }
-          } finally {
-            myMaster = -1;
+          int fd = myMaster;
+          myMaster = -1;
+          int status = close0(fd);
+          if (status == -1) {
+            throw new IOException("Close error");
+          }
+        }
+      }
+    }
+
+    if (mySlaveFD != -1) {
+      synchronized (myFDLock) {
+        if (mySlaveFD != -1) {
+          int fd = mySlaveFD;
+          mySlaveFD = -1;
+          int status = CLibrary.close(fd);
+          if (status == -1) {
+            throw new IOException("Close error");
           }
         }
       }
@@ -250,13 +218,13 @@ public class Pty {
   }
 
   private int close0(int fd) throws IOException {
-    int ret = JTermios.close(fd);
+    int ret = CLibrary.close(fd);
 
     breakRead();
 
     synchronized (mySelectLock) {
-      JTermios.close(myPipe[0]);
-      JTermios.close(myPipe[1]);
+      CLibrary.close(myPipe[0]);
+      CLibrary.close(myPipe[1]);
       myPipe[0] = -1;
       myPipe[1] = -1;
     }
@@ -265,44 +233,7 @@ public class Pty {
   }
 
   void breakRead() {
-    JTermios.write(myPipe[1], new byte[1], 1);
-  }
-
-  public static int wait0(int pid) {
-    PtyHelpers.OSFacade m_jpty = PtyHelpers.getInstance();
-
-    int[] status = new int[1];
-
-    if (pid < 0) {
-      return -1;
-    }
-
-    for (; ; ) {
-      if (m_jpty.waitpid(pid, status, 0) < 0) {
-        if (JTermios.errno() == JTermios.EINTR) {
-          // interrupted system call - retry
-          continue;
-        }
-      }
-      break;
-    }
-    if (WIFEXITED(status[0])) {
-      return WEXITSTATUS(status[0]);
-    }
-
-    return status[0];
-  }
-
-  static int WEXITSTATUS(int status) {
-    return (status >> 8) & 0x000000ff;
-  }
-
-  static boolean WIFEXITED(int status) {
-    return _WSTATUS(status) == 0;
-  }
-
-  private static int _WSTATUS(int status) {
-    return status & 0177;
+    CLibrary.write(myPipe[1], new byte[1], 1);
   }
 
   int read(byte[] buf, int len) throws IOException {
@@ -316,33 +247,32 @@ public class Pty {
       haveBytes = useSelect ? select(myPipe[0], fd) : poll(myPipe[0], fd);
     }
 
-    return haveBytes ? JTermios.read(fd, buf, len) : -1;
+    return haveBytes ? CLibrary.read(fd, buf, len) : -1;
   }
 
+  @SuppressWarnings("SpellCheckingInspection")
   private static boolean poll(int pipeFd, int fd) {
-    // each {int, short, short} structure is represented by two ints
-    int[] poll_fds = new int[]{pipeFd, JTermios.POLLIN, fd, JTermios.POLLIN};
-    while (true) {
-      if (JTermios.poll(poll_fds, 2, -1) > 0) break;
-
-      int errno = JTermios.errno();
-      if (errno != JTermios.EAGAIN && errno != JTermios.EINTR) return false;
+    Pollfd[] poll_fds = new Pollfd[]{
+      new Pollfd(pipeFd, CLibrary.POLLIN),
+      new Pollfd(fd, CLibrary.POLLIN)
+    };
+    while (CLibrary.poll(poll_fds, -1) <= 0) {
+      int errno = CLibrary.errno();
+      if (errno != CLibrary.EAGAIN && errno != CLibrary.EINTR) return false;
     }
-    return ((poll_fds[3] >> 16) & JTermios.POLLIN) != 0;
+    return (poll_fds[1].getRevents() & CLibrary.POLLIN) != 0;
   }
 
   private static boolean select(int pipeFd, int fd) {
-    FDSet set = JTermios.newFDSet();
-
-    JTermios.FD_SET(pipeFd, set);
-    JTermios.FD_SET(fd, set);
-    JTermios.select(Math.max(fd, pipeFd) + 1, set, null, null, null);
-
-    return JTermios.FD_ISSET(fd, set);
+    FDSet set = new fd_set();
+    set.FD_SET(pipeFd);
+    set.FD_SET(fd);
+    CLibrary.select(Math.max(fd, pipeFd) + 1, set);
+    return set.FD_ISSET(fd);
   }
 
-  int write(byte[] buf, int len) throws IOException {
-    return JTermios.write(myMaster, buf, len);
+  int write(byte[] buf, int len) {
+    return CLibrary.write(myMaster, buf, len);
   }
 
 }
