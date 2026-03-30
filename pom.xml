@@ -6,7 +6,7 @@
 
     <groupId>consulo.internal</groupId>
     <artifactId>pty4j</artifactId>
-    <version>0.13.3</version>
+    <version>0.13.4</version>
 
     <repositories>
         <repository>
