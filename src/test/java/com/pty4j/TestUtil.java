@@ -4,7 +4,6 @@ import com.pty4j.unix.Pty;
 import com.pty4j.util.PtyUtil;
 import com.sun.jna.Platform;
 import com.sun.jna.platform.win32.Kernel32;
-import kotlin.KotlinVersion;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.slf4j.Logger;
@@ -39,14 +38,14 @@ public class TestUtil {
     List<String> result = new ArrayList<>();
     result.add(getJavaExecutablePath());
     result.add("-cp");
-    result.add(getJarPathForClasses(TestUtil.class,     // build/classes/java/test
-                                    Ascii.class,        // build/classes/kotlin/test
-                                    Pty.class,          // build/classes/java/main
-                                    WinSize.class,      // build/classes/kotlin/main
-                                    Logger.class,       // slf4j-api.jar
-                                    Platform.class,     // jna.jar
-                                    Kernel32.class,     // jna-platform.jar
-                                    KotlinVersion.class /* kotlin-stdlib.jar */));
+    result.add(getJarPathForClasses(TestUtil.class,   // build/classes/java/test
+                                    Ascii.class,      // build/classes/java/test
+                                    Pty.class,        // build/classes/java/main
+                                    WinSize.class,    // build/classes/java/main
+                                    Logger.class,     // slf4j-api.jar
+                                    Platform.class,   // jna.jar
+                                    Kernel32.class    // jna-platform.jar
+                                   ));
     result.add(aClass.getName());
     result.addAll(Arrays.asList(args));
     return result.toArray(new String[0]);

@@ -19,7 +19,7 @@ import java.nio.file.SimpleFileVisitor;
 import java.nio.file.attribute.BasicFileAttributes;
 import java.util.*;
 
-public class ExtractedNativeTest {
+public abstract class ExtractedNativeTest {
 
   private static final Logger LOG = LoggerFactory.getLogger(ExtractedNativeTest.class);
 

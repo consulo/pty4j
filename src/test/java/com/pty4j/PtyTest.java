@@ -45,7 +45,7 @@ import java.util.concurrent.locks.ReentrantLock;
 /**
  * Test cases for {@link com.pty4j.unix.PtyHelpers}.
  */
-public class PtyTest extends TestCase {
+public abstract class PtyTest extends TestCase {
 
   private static final int WAIT_TIMEOUT_SECONDS = TestUtil.getTestWaitTimeoutSeconds();
 

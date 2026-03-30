@@ -9,7 +9,7 @@ package com.pty4j.unix;
 
 import com.pty4j.PtyProcess;
 import com.pty4j.WinSize;
-import kotlin.Pair;
+import com.pty4j.util.Pair;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
