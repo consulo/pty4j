@@ -60,7 +60,7 @@ jobs:
           cat /tmp/exports.txt
           echo
           MISSING=0
-          for sym in exec_pty openpty pfind wait_for_child_process_exit get_window_size; do
+          for sym in exec_pty ptys_open pfind wait_for_child_process_exit get_window_size; do
               if ! grep -q "^${sym}\$" /tmp/exports.txt; then
                   echo "::error::export '$sym' missing from $DY"
                   MISSING=1
