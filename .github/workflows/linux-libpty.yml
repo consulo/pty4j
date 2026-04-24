@@ -34,7 +34,7 @@ jobs:
             make_target: linux_riscv64
             makefile_arch: riscv64
             elf_machine: RISC-V
-            apt: gcc-riscv64-linux-gnu
+            apt: gcc-riscv64-linux-gnu libc6-dev-riscv64-cross
             runs_on: ubuntu-latest
 
     runs-on: ${{ matrix.runs_on }}
