@@ -75,6 +75,9 @@ jobs:
           # CMakeLists expects ../openpty.c at native/openpty.c but the real source
           # is at src/main/native/openpty.c. Place a copy where CMakeLists looks.
           cp src/main/native/openpty.c native/openpty.c
+          # CMakeLists hard-codes set(CMAKE_OSX_ARCHITECTURES "x86_64;arm64")
+          # (universal). Drop that line so our -DCMAKE_OSX_ARCHITECTURES wins.
+          sed -i.bak '/set(CMAKE_OSX_ARCHITECTURES/d' native/unix-spawn-helper/CMakeLists.txt
           cmake -S native/unix-spawn-helper -B build/unix-spawn-helper \
               -DCMAKE_BUILD_TYPE=Release \
               -DCMAKE_OSX_ARCHITECTURES=${{ matrix.macho_arch }}
