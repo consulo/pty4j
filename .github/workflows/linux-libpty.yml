@@ -1,0 +1,127 @@
+name: linux-libpty
+
+on:
+  push:
+    branches: [ "master" ]
+  pull_request:
+    branches: [ "master" ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x86_64
+            make_target: linux_x86_64
+            makefile_arch: x86-64
+            elf_machine: Advanced Micro Devices X86-64
+            runs_on: ubuntu-latest
+          - arch: aarch64
+            make_target: linux_aarch64
+            makefile_arch: aarch64
+            elf_machine: AArch64
+            runs_on: ubuntu-24.04-arm
+          - arch: loongarch64
+            make_target: linux_loongarch64
+            makefile_arch: loongarch64
+            elf_machine: LoongArch
+            loongson: true
+            cc_override: CC=loongarch64-unknown-linux-gnu-gcc
+            runs_on: ubuntu-latest
+          - arch: riscv64
+            make_target: linux_riscv64
+            makefile_arch: riscv64
+            elf_machine: RISC-V
+            apt: gcc-riscv64-linux-gnu
+            runs_on: ubuntu-latest
+
+    runs-on: ${{ matrix.runs_on }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install cross compiler (apt)
+        if: matrix.apt
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends ${{ matrix.apt }}
+
+      - name: Install Loongson toolchain
+        if: matrix.loongson
+        run: |
+          URL="https://github.com/loongson/build-tools/releases/download/2024.08.08/x86_64-cross-tools-loongarch64-binutils_2.43-gcc_14.2.0-glibc_2.40.tar.xz"
+          wget -q "$URL" -O /tmp/loongson.tar.xz
+          sudo mkdir -p /opt/loongson
+          sudo tar -xf /tmp/loongson.tar.xz -C /opt/loongson --strip-components=1
+          echo "/opt/loongson/bin" >> $GITHUB_PATH
+
+      - name: Build libpty.so
+        working-directory: src/main/native
+        run: make -f Makefile_linux ${{ matrix.make_target }} ${{ matrix.cc_override }}
+
+      - name: Verify ELF architecture
+        run: |
+          set -euo pipefail
+          SO=src/main/os/linux/${{ matrix.makefile_arch }}/libpty.so
+          echo "File: $SO"
+          readelf -h "$SO" | grep -E "Class|Machine"
+          MACHINE=$(readelf -h "$SO" | awk -F: '/Machine:/ {sub(/^[ \t]+/,"",$2); print $2}')
+          if [ "$MACHINE" != "${{ matrix.elf_machine }}" ]; then
+              echo "::error::ELF machine mismatch. Expected '${{ matrix.elf_machine }}' for ${{ matrix.arch }}, got '$MACHINE'."
+              exit 1
+          fi
+          echo "OK: ELF machine is '$MACHINE' as expected."
+
+      - name: Stage artifact
+        run: |
+          mkdir -p out/linux-${{ matrix.arch }}
+          cp src/main/os/linux/${{ matrix.makefile_arch }}/libpty.so out/linux-${{ matrix.arch }}/libpty.so
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: libpty-linux-${{ matrix.arch }}
+          path: out
+          if-no-files-found: error
+
+  publish:
+    needs: build
+    if: github.ref == 'refs/heads/master' && github.event_name == 'push'
+    runs-on: ubuntu-latest
+    concurrency:
+      group: binaries-publish
+      cancel-in-progress: false
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Arrange binaries by os-arch
+        run: |
+          set -euo pipefail
+          mkdir -p out
+          for dir in artifacts/libpty-linux-*/linux-*/; do
+              arch_dir=$(basename "$dir")
+              mkdir -p "out/$arch_dir"
+              cp "$dir"libpty.so "out/$arch_dir/"
+          done
+          find out -type f
+
+      - name: Commit and push to consulo/binaries
+        env:
+          CONSULO_BOT_TOKEN: ${{ secrets.CONSULO_BOT_TOKEN }}
+        run: |
+          set -euo pipefail
+          git clone "https://consulo-bot:${CONSULO_BOT_TOKEN}@github.com/consulo/binaries.git" binaries-repo
+          cd binaries-repo
+          git checkout master 2>/dev/null || git checkout --orphan master
+          git config user.name "consulo Bot"
+          git config user.email "consulo.bot@gmail.com"
+          cp -r ../out/. .
+          git add -A
+          if git diff --cached --quiet; then
+            echo "No changes to commit"
+          else
+            git commit -m "Update pty4j libpty.so (linux) from ${GITHUB_REPOSITORY}@${GITHUB_SHA::7}"
+            git push -u origin master
+          fi

@@ -1,0 +1,122 @@
+name: mac-libpty
+
+on:
+  push:
+    branches: [ "master" ]
+  pull_request:
+    branches: [ "master" ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x86_64
+            macho_arch: x86_64
+            min_macos: 10.9
+          - arch: aarch64
+            macho_arch: arm64
+            min_macos: 11.0
+
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build libpty.dylib (${{ matrix.macho_arch }})
+        run: |
+          set -euo pipefail
+          mkdir -p build
+          clang -arch ${{ matrix.macho_arch }} \
+              -mmacosx-version-min=${{ matrix.min_macos }} \
+              -dynamiclib -fPIC -D_REENTRANT \
+              -o build/libpty.dylib \
+              src/main/native/exec_pty.c \
+              src/main/native/openpty.c \
+              src/main/native/pfind.c
+          echo "=== lipo -archs build/libpty.dylib ==="
+          ARCHS=$(lipo -archs build/libpty.dylib)
+          echo "$ARCHS"
+          if [ "$ARCHS" != "${{ matrix.macho_arch }}" ]; then
+              echo "::error::libpty.dylib arch mismatch. Expected '${{ matrix.macho_arch }}', got '$ARCHS'."
+              exit 1
+          fi
+
+      - name: Build pty4j-unix-spawn-helper (${{ matrix.macho_arch }})
+        run: |
+          set -euo pipefail
+          cmake -S native/unix-spawn-helper -B build/unix-spawn-helper \
+              -DCMAKE_BUILD_TYPE=Release \
+              -DCMAKE_OSX_ARCHITECTURES=${{ matrix.macho_arch }}
+          cmake --build build/unix-spawn-helper --config Release
+          HELPER=$(find . -type f -name pty4j-unix-spawn-helper | head -1)
+          echo "Found: $HELPER"
+          cp "$HELPER" build/pty4j-unix-spawn-helper
+          echo "=== lipo -archs build/pty4j-unix-spawn-helper ==="
+          ARCHS=$(lipo -archs build/pty4j-unix-spawn-helper)
+          echo "$ARCHS"
+          if [ "$ARCHS" != "${{ matrix.macho_arch }}" ]; then
+              echo "::error::helper arch mismatch. Expected '${{ matrix.macho_arch }}', got '$ARCHS'."
+              exit 1
+          fi
+
+      - name: Stage artifacts
+        run: |
+          set -euo pipefail
+          mkdir -p out/macos-${{ matrix.arch }}
+          cp build/libpty.dylib out/macos-${{ matrix.arch }}/
+          cp build/pty4j-unix-spawn-helper out/macos-${{ matrix.arch }}/
+          chmod +x out/macos-${{ matrix.arch }}/pty4j-unix-spawn-helper
+          find out -type f
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: libpty-macos-${{ matrix.arch }}
+          path: out
+          if-no-files-found: error
+
+  publish:
+    needs: build
+    if: github.ref == 'refs/heads/master' && github.event_name == 'push'
+    runs-on: ubuntu-latest
+    concurrency:
+      group: binaries-publish
+      cancel-in-progress: false
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Arrange binaries by os-arch
+        run: |
+          set -euo pipefail
+          mkdir -p out
+          for dir in artifacts/libpty-macos-*/macos-*/; do
+              arch_dir=$(basename "$dir")
+              mkdir -p "out/$arch_dir"
+              cp "$dir"libpty.dylib "out/$arch_dir/"
+              cp "$dir"pty4j-unix-spawn-helper "out/$arch_dir/"
+              chmod +x "out/$arch_dir/pty4j-unix-spawn-helper"
+          done
+          find out -type f
+
+      - name: Commit and push to consulo/binaries
+        env:
+          CONSULO_BOT_TOKEN: ${{ secrets.CONSULO_BOT_TOKEN }}
+        run: |
+          set -euo pipefail
+          git clone "https://consulo-bot:${CONSULO_BOT_TOKEN}@github.com/consulo/binaries.git" binaries-repo
+          cd binaries-repo
+          git checkout master 2>/dev/null || git checkout --orphan master
+          git config user.name "consulo Bot"
+          git config user.email "consulo.bot@gmail.com"
+          cp -r ../out/. .
+          chmod +x macos-*/pty4j-unix-spawn-helper 2>/dev/null || true
+          git add -A
+          if git diff --cached --quiet; then
+            echo "No changes to commit"
+          else
+            git commit -m "Update pty4j libpty.dylib + helper (macos) from ${GITHUB_REPOSITORY}@${GITHUB_SHA::7}"
+            git push -u origin master
+          fi
