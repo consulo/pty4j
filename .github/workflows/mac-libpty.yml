@@ -35,17 +35,46 @@ jobs:
               src/main/native/exec_pty.c \
               src/main/native/openpty.c \
               src/main/native/pfind.c
-          echo "=== lipo -archs build/libpty.dylib ==="
-          ARCHS=$(lipo -archs build/libpty.dylib)
+
+      - name: Verify libpty.dylib
+        run: |
+          set -euo pipefail
+          DY=build/libpty.dylib
+          echo "=== File: $DY ==="
+          ls -la "$DY"
+          echo
+          echo "=== Mach-O archs ==="
+          ARCHS=$(lipo -archs "$DY")
           echo "$ARCHS"
           if [ "$ARCHS" != "${{ matrix.macho_arch }}" ]; then
               echo "::error::libpty.dylib arch mismatch. Expected '${{ matrix.macho_arch }}', got '$ARCHS'."
               exit 1
           fi
+          echo
+          echo "=== Dynamic dependencies ==="
+          otool -L "$DY"
+          echo
+          echo "=== Exported symbols ==="
+          # nm -gU prints external defined symbols. macOS prepends a leading '_'.
+          nm -gU "$DY" | awk '{print $3}' | sed 's/^_//' | sort -u > /tmp/exports.txt
+          cat /tmp/exports.txt
+          echo
+          MISSING=0
+          for sym in exec_pty openpty pfind wait_for_child_process_exit get_window_size; do
+              if ! grep -q "^${sym}\$" /tmp/exports.txt; then
+                  echo "::error::export '$sym' missing from $DY"
+                  MISSING=1
+              fi
+          done
+          [ "$MISSING" = "0" ] || exit 1
+          echo "OK: libpty.dylib is '$ARCHS' with all expected exports."
 
       - name: Build pty4j-unix-spawn-helper (${{ matrix.macho_arch }})
         run: |
           set -euo pipefail
+          # CMakeLists expects ../openpty.c at native/openpty.c but the real source
+          # is at src/main/native/openpty.c. Place a copy where CMakeLists looks.
+          cp src/main/native/openpty.c native/openpty.c
           cmake -S native/unix-spawn-helper -B build/unix-spawn-helper \
               -DCMAKE_BUILD_TYPE=Release \
               -DCMAKE_OSX_ARCHITECTURES=${{ matrix.macho_arch }}
@@ -53,13 +82,28 @@ jobs:
           HELPER=$(find . -type f -name pty4j-unix-spawn-helper | head -1)
           echo "Found: $HELPER"
           cp "$HELPER" build/pty4j-unix-spawn-helper
-          echo "=== lipo -archs build/pty4j-unix-spawn-helper ==="
-          ARCHS=$(lipo -archs build/pty4j-unix-spawn-helper)
+
+      - name: Verify pty4j-unix-spawn-helper
+        run: |
+          set -euo pipefail
+          BIN=build/pty4j-unix-spawn-helper
+          echo "=== File: $BIN ==="
+          ls -la "$BIN"
+          echo
+          echo "=== Mach-O archs ==="
+          ARCHS=$(lipo -archs "$BIN")
           echo "$ARCHS"
           if [ "$ARCHS" != "${{ matrix.macho_arch }}" ]; then
               echo "::error::helper arch mismatch. Expected '${{ matrix.macho_arch }}', got '$ARCHS'."
               exit 1
           fi
+          echo
+          echo "=== Mach-O type ==="
+          file "$BIN"
+          echo
+          echo "=== Dynamic dependencies ==="
+          otool -L "$BIN"
+          echo "OK: pty4j-unix-spawn-helper is '$ARCHS'."
 
       - name: Stage artifacts
         run: |

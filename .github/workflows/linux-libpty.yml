@@ -58,20 +58,47 @@ jobs:
 
       - name: Build libpty.so
         working-directory: src/main/native
-        run: make -f Makefile_linux ${{ matrix.make_target }} ${{ matrix.cc_override }}
+        # Override CFLAGS to drop the Makefile's hard-coded
+        # `-B/usr/lib/x86_64-linux-gnu` (wrong for cross compilers and even for
+        # native arm64 runners). Make CLI assignment overrides the Makefile's
+        # `CFLAGS +=` line.
+        run: |
+          make -f Makefile_linux ${{ matrix.make_target }} ${{ matrix.cc_override }} \
+              CFLAGS="-fpic -D_REENTRANT -D_GNU_SOURCE"
 
-      - name: Verify ELF architecture
+      - name: Verify libpty.so
         run: |
           set -euo pipefail
           SO=src/main/os/linux/${{ matrix.makefile_arch }}/libpty.so
-          echo "File: $SO"
-          readelf -h "$SO" | grep -E "Class|Machine"
+          echo "=== File: $SO ==="
+          ls -la "$SO"
+          echo
+          echo "=== ELF header ==="
+          readelf -h "$SO" | grep -E "Class|Machine|Type"
           MACHINE=$(readelf -h "$SO" | awk -F: '/Machine:/ {sub(/^[ \t]+/,"",$2); print $2}')
           if [ "$MACHINE" != "${{ matrix.elf_machine }}" ]; then
               echo "::error::ELF machine mismatch. Expected '${{ matrix.elf_machine }}' for ${{ matrix.arch }}, got '$MACHINE'."
               exit 1
           fi
-          echo "OK: ELF machine is '$MACHINE' as expected."
+          echo
+          echo "=== Dynamic dependencies (NEEDED) ==="
+          readelf -d "$SO" | grep -E 'NEEDED|SONAME|RUNPATH'
+          echo
+          echo "=== Exported symbols ==="
+          readelf -W --dyn-syms "$SO" \
+            | awk '$7 != "UND" && ($5 == "GLOBAL" || $5 == "WEAK") { sub(/@@?.*/, "", $8); print $8 }' \
+            | sort -u > /tmp/exports.txt
+          cat /tmp/exports.txt
+          echo
+          MISSING=0
+          for sym in exec_pty openpty pfind wait_for_child_process_exit get_window_size; do
+              if ! grep -q "^${sym}\$" /tmp/exports.txt; then
+                  echo "::error::export '$sym' missing from $SO"
+                  MISSING=1
+              fi
+          done
+          [ "$MISSING" = "0" ] || exit 1
+          echo "OK: libpty.so is '$MACHINE' with all expected exports."
 
       - name: Stage artifact
         run: |

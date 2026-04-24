@@ -39,24 +39,42 @@ jobs:
             -G "Visual Studio 17 2022"
             -A ${{ matrix.cmake_arch }}
             -DCMAKE_BUILD_TYPE=Release
+            -DCMAKE_POLICY_VERSION_MINIMUM=3.5
 
       - name: Build
         shell: cmd
         run: cmake --build build/win-helper --config Release
 
-      - name: Verify PE machine
+      - name: Verify win-helper.dll
         shell: bash
         run: |
           set -euo pipefail
           DLL=$(find build/win-helper -type f -name win-helper.dll | head -1)
-          echo "File: $DLL"
+          echo "=== File: $DLL ==="
+          ls -la "$DLL"
+          echo
+          echo "=== PE machine ==="
           dumpbin //HEADERS "$DLL" | grep -E "machine \(.*\)" | head -1
           MACHINE=$(dumpbin //HEADERS "$DLL" | grep -E "machine \(.*\)" | head -1 | sed -E 's/.*machine \(([^)]*)\).*/\1/')
           if [ "$MACHINE" != "${{ matrix.pe_machine }}" ]; then
               echo "::error::PE machine mismatch. Expected '${{ matrix.pe_machine }}' for ${{ matrix.arch }}, got '$MACHINE'."
               exit 1
           fi
-          echo "OK: PE machine is '$MACHINE' as expected."
+          echo
+          echo "=== Dependents ==="
+          dumpbin //DEPENDENTS "$DLL" | grep -E '\.dll' | head -20
+          echo
+          echo "=== Exports ==="
+          dumpbin //EXPORTS "$DLL" | tee /tmp/exports.txt
+          MISSING=0
+          for sym in getCurrentDirectory; do
+              if ! grep -q "$sym" /tmp/exports.txt; then
+                  echo "::error::export '$sym' missing from $DLL"
+                  MISSING=1
+              fi
+          done
+          [ "$MISSING" = "0" ] || exit 1
+          echo "OK: win-helper.dll is '$MACHINE' with all expected exports."
 
       - name: Stage artifact
         shell: bash
